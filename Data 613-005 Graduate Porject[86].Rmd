@@ -1,0 +1,289 @@
+---
+title: "Data 613-005 Graduate Porject"
+author: "Barbara Broussard, Elaine Oruk, Bright Amenyo"
+date: "2024-04-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(shiny)
+library(ggplot2)
+library(sqldf)
+library(car)
+
+```
+
+
+```{r set_up_and_cleaning_data}
+
+bnborig<- read.csv('/Users/brightamenyo/Desktop/Spring Semester/Data Science/project/Airbnb_Data.csv') 
+names(bnborig)
+
+bnbshort<- select(bnborig, id, log_price, property_type, amenities, accommodates, cancellation_policy, cleaning_fee, city, latitude, longitude, number_of_reviews, review_scores_rating,  beds)
+
+bnbnona <- na.omit(bnbshort)
+
+bnbnozeros <- filter(bnbnona, beds>0, log_price > 0)
+
+bnbnewvariable <- mutate(bnbnozeros, amlength = nchar(amenities))
+
+bnb<- distinct(bnbnewvariable)
+```
+Our data as a tibble
+
+```{r As_tibble}
+as_tibble(bnb)
+```
+
+Our Data as a Data Frame
+
+```{r as_dataframe}
+as.data.frame(bnb)
+```
+
+Type of our variables & our Dataset
+
+```{r}
+class(bnb)
+
+str(bnb)
+```
+
+
+
+
+
+```{r}
+# Load the dplyr package
+library(dplyr)
+
+# Filtered data and remove entries with less than 20 reviews
+filtered_data <- sqldf("SELECT * FROM bnb WHERE property_type IN ('Apartment', 'House','Condominium', 'Townhouse', 'Loft')") %>%
+  filter(number_of_reviews >= 250)
+
+boxplot(filtered_data$number_of_reviews)
+
+
+
+# Calculate mean, standard deviation, minimum, maximum, and median by city
+summary_by_city <- filtered_data %>%
+  group_by(city) %>%
+  summarize(number_of_reviews = sum(number_of_reviews),
+            mean_rating = mean(review_scores_rating),
+            sd_rating = sd(review_scores_rating),
+            min_rating = min(review_scores_rating),
+            max_rating = max(review_scores_rating),
+            median_rating = median(review_scores_rating))
+
+# Display the result
+print(summary_by_city)
+
+
+```
+
+
+
+```{r}
+names(bnb)
+bnb$price<-exp(bnb$log_price)
+filtered_data$log_review_scores_rating <- log(filtered_data$review_scores_rating)
+```
+
+# Data split (Test and Train)
+```{r}
+set.seed(123)
+Z <- sample(nrow(filtered_data), .5* nrow(filtered_data))
+ctrain <- filtered_data[Z,]
+ctest <- filtered_data[-Z,]
+```
+
+
+
+
+
+
+```{r}
+# proper rating prediction
+# Forward stepwise selection for review_scores_rating prediction
+Model_full1 <- lm(review_scores_rating ~ city + cleaning_fee + beds + accommodates + cancellation_policy + amlength + property_type, data = filtered_data)
+step_Model_full1 <- step(Model_full1, direction = "forward")
+summary(Model_full1)
+vif(step_Model_full1)
+
+
+#MSE
+Model_full1_train<- lm( review_scores_rating ~ city + cleaning_fee + beds + 
+    accommodates + cancellation_policy + amlength + property_type, 
+    data = ctrain)
+
+pred_full1_train <- predict(Model_full1_train, newdata = ctrain)
+pred_full1_test <- predict(Model_full1_train, newdata = ctest)
+rmse_full1_train <- sqrt(mean((ctrain$review_scores_rating - pred_full1_train)^2))
+rmse_full1_train
+
+
+
+
+```
+
+```{r}
+
+# Fit the linear regression model with the transformed response variable
+Model_full2 <- lm(log_review_scores_rating ~ city + cleaning_fee + beds + accommodates + cancellation_policy + amlength, data = filtered_data)
+step_Model_full2 <- step(Model_full2, direction = "forward")
+summary(step_Model_full2)
+vif(step_Model_full2)
+
+
+Model_full2_train<- lm(log_review_scores_rating ~ city + cleaning_fee + 
+    beds + accommodates + cancellation_policy + amlength, data = ctrain)
+
+pred_full2_train <- predict(Model_full2_train, newdata = ctrain)
+pred_full2_test <- predict(Model_full2_train, newdata = ctest)
+rmse_full2_train <- sqrt(mean((ctrain$log_review_scores_rating - pred_full2_train)^2))
+
+rmse_full2_train
+
+
+```
+
+
+```{r}
+## price prediction
+# Forward stepwise selection for log_price prediction
+Model_full <- lm(log_price ~ city + cleaning_fee + beds + accommodates + cancellation_policy + amlength + review_scores_rating + property_type, data = filtered_data)
+step_Model_full <- step(Model_full, direction = "forward")
+summary(step_Model_full)
+vif(step_Model_full)
+
+Model_full_train<- lm(log_price ~ city + cleaning_fee + beds + accommodates + 
+    cancellation_policy + amlength + review_scores_rating + property_type, 
+    data = ctrain)
+
+pred_full_train <- predict(Model_full_train, newdata = ctrain)
+pred_full_test <- predict(Model_full_train, newdata = ctest)
+rmse_full_train <- sqrt(mean((ctrain$log_price - pred_full_train)^2))
+rmse_full_train
+
+```
+
+
+
+
+
+```{r}
+# Load required libraries
+library(shiny)
+library(ggplot2)
+library(sqldf)
+library(DT)
+
+filtered_data$log_review_scores_rating <- log(filtered_data$review_scores_rating)
+
+
+# Filtered data and remove entries with less than 250 reviews
+filtered_data <- sqldf("SELECT * FROM bnb WHERE property_type IN ('Apartment', 'House','Condominium', 'Townhouse', 'Loft')") %>%
+  filter(number_of_reviews >= 250)
+filtered_data$log_review_scores_rating <- log(filtered_data$review_scores_rating)
+
+# Define UI
+ui <- fluidPage(
+  titlePanel("Airbnb Data Distribution"),
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("plot_type", "Select Plot Type:",
+                  choices = c("Density Plot", "Box Plot", "Bar Plot", "Scatter Plot")),
+      uiOutput("numeric_selector"),
+      uiOutput("qualitative_selector")
+    ),
+    mainPanel(
+      plotOutput("distribution_plot"),
+      verbatimTextOutput("correlation_output"),  # Display correlation matrix
+      DTOutput("filtered_data_table")   # Display filtered data table
+    )
+  )
+)
+
+# Define server logic
+server <- function(input, output) {
+  
+  output$numeric_selector <- renderUI({
+    selectInput("numeric_variable", "Select Numeric Variable:",
+                choices = c("log_price", "price", "log_review_scores_rating", "number_of_reviews", "accommodates", "review_scores_rating", "beds"))
+  })
+  
+  output$qualitative_selector <- renderUI({
+    selectInput("qualitative_variable", "Select Qualitative Variable:",
+                choices = c("property_type", "city","log_price", "price", "log_review_scores_rating", "number_of_reviews", "accommodates", "review_scores_rating", "beds"))
+  })
+  
+  output$distribution_plot <- renderPlot({
+    if(is.null(input$numeric_variable) || is.null(input$qualitative_variable)) {
+      return(NULL)
+    }
+    
+    data <- filtered_data
+    
+    if(input$plot_type == "Density Plot") {
+      if(input$numeric_variable %in% colnames(data)) {
+        ggplot(data, aes_string(x = input$numeric_variable, fill = input$qualitative_variable)) +
+          geom_density(alpha = 0.5) +
+          labs(x = input$numeric_variable, y = "Density") +
+          theme_minimal()
+      }
+    } else if(input$plot_type == "Box Plot") {
+      if(input$numeric_variable %in% colnames(data)) {
+        ggplot(data, aes_string(x = input$qualitative_variable, y = input$numeric_variable)) +
+          geom_boxplot(fill = "skyblue") +
+          labs(x = input$qualitative_variable, y = input$numeric_variable) +
+          theme_minimal()
+      }
+    } else if(input$plot_type == "Bar Plot") {
+      if(input$numeric_variable %in% colnames(data)) {
+        ggplot(data, aes_string(x = input$qualitative_variable, fill = input$qualitative_variable)) +
+          geom_bar() +
+          labs(x = input$qualitative_variable, y = "Frequency") +
+          theme_minimal()
+      }
+    } else if(input$plot_type == "Scatter Plot") {
+      if(input$numeric_variable %in% colnames(data) && input$qualitative_variable %in% colnames(data)) {
+        ggplot(data, aes_string(x = input$numeric_variable, y = input$qualitative_variable)) +
+          geom_point() +
+          labs(x = input$numeric_variable, y = input$qualitative_variable) +
+          theme_minimal()
+      }
+    }
+  })
+  
+  # Calculate and display correlation matrix
+  output$correlation_output <- renderPrint({
+    if (!is.null(input$numeric_variable)) {
+      cor_data <- filtered_data[, c("log_price", "accommodates", "number_of_reviews", "review_scores_rating", "beds")]
+      correlation_matrix <- cor(cor_data)
+      correlation_matrix
+    }
+  })
+  
+  # Display filtered data table
+  output$filtered_data_table <- renderDT({
+    datatable(
+      filtered_data[,-c(4,9,10)], 
+      filter = "top", 
+      options = list(
+        pageLength = 10,
+        lengthMenu = c(5, 10, 15, 20),
+        dom = 'ft<"row"<"col-sm-6"i><"col-sm-6"p>>'
+      )
+    )
+  })
+}
+
+# Run the application
+shinyApp(ui = ui, server = server)
+
+```
+
+
+
+
